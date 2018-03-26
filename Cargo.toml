@@ -1,7 +1,11 @@
 [package]
-name = "ggez-inputty"
+name = "ggez_inputty"
 version = "0.1.0"
 authors = ["Ratys <alexander.sepity@gmail.com>"]
+
+[lib]
+name = "ggez_inputty"
+path = "src/lib.rs"
 
 [features]
 default = ["logging"]
