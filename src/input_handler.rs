@@ -1,7 +1,7 @@
+use ggez::GameResult;
+use ggez::event::{Axis, Button, Keycode, Mod, MouseButton, MouseState};
 use std::hash::Hash;
 use std::collections::{HashMap, VecDeque};
-use ggez::Context;
-use ggez::event::{Axis, Button, Keycode, Mod, MouseButton, MouseState};
 
 /// Gathers kinds of physical (read: SDL2-specific) sources of input under a single enum.
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
@@ -13,7 +13,7 @@ pub enum PhysicalInput {
     MWheelX(bool),
     MWheelY(bool),
     MMotion,
-    Key(Keycode),
+    Key(Keycode, bool),
 }
 
 /// Facilitates passing concrete values to parsing callbacks; types are as used in SDL2.
@@ -28,15 +28,19 @@ pub enum PhysicalInputValue {
     XY(i32, i32, i32, i32, i32),
 }
 
+type LogicalInputCallback<State> =
+    Box<Fn(&mut State, PhysicalInput, PhysicalInputValue) -> GameResult<()>>;
+type DynamicsCallback<State> = Box<Fn(&mut State) -> GameResult<()>>;
+
 /// A struct containing a mapping from physical input events to callbacks.
 pub struct InputHandler<LogicalInput, State>
 where
     LogicalInput: Hash + Eq + Clone,
 {
-    definitions: HashMap<LogicalInput, Box<Fn(&mut Context, &mut State, PhysicalInputValue)>>,
-    dynamics: Vec<Box<Fn(&mut Context, &mut State)>>,
+    definitions: HashMap<LogicalInput, LogicalInputCallback<State>>,
+    dynamics: Vec<DynamicsCallback<State>>,
     bindings: HashMap<PhysicalInput, Vec<LogicalInput>>,
-    input_queue: VecDeque<(LogicalInput, PhysicalInputValue)>,
+    input_queue: VecDeque<(LogicalInput, PhysicalInput, PhysicalInputValue)>,
 }
 
 impl<LogicalInput, State> InputHandler<LogicalInput, State>
@@ -52,16 +56,12 @@ where
         }
     }
 
-    pub fn define(
-        mut self,
-        logical: LogicalInput,
-        callback: Box<Fn(&mut Context, &mut State, PhysicalInputValue)>,
-    ) -> Self {
+    pub fn define(mut self, logical: LogicalInput, callback: LogicalInputCallback<State>) -> Self {
         self.definitions.insert(logical, callback);
         self
     }
 
-    pub fn add_dynamics(mut self, callback: Box<Fn(&mut Context, &mut State)>) -> Self {
+    pub fn add_dynamics(mut self, callback: DynamicsCallback<State>) -> Self {
         self.dynamics.push(callback);
         self
     }
@@ -69,46 +69,53 @@ where
     pub fn bind(mut self, physical: PhysicalInput, logical: LogicalInput) -> Self {
         self.bindings
             .entry(physical)
-            .or_insert(Vec::new())
+            .or_insert_with(Vec::new)
             .push(logical);
         self
     }
 
-    pub fn update(&mut self, context: &mut Context, state: &mut State) {
-        for callback in self.dynamics.iter() {
-            callback(context, state);
+    pub fn update(&mut self, state: &mut State) -> GameResult<()> {
+        for callback in &self.dynamics {
+            callback(state)?;
         }
-        while let Some((logical, value)) = self.input_queue.pop_front() {
+        while let Some((logical, physical, value)) = self.input_queue.pop_front() {
             if let Some(callback) = self.definitions.get(&logical) {
-                callback(context, state, value);
+                callback(state, physical, value)?;
             }
         }
+        Ok(())
     }
 
-    pub fn mouse_button_down_event(&mut self, button: MouseButton, x: i32, y: i32) {
+    pub fn mouse_button_down_event(&mut self, button: MouseButton, _x: i32, _y: i32) {
         #[cfg(feature = "logging")]
         debug!(
             "raw mouse button down: {:?} | x: {} | y: {} | instance: {}",
-            button, x, y, 0
+            button, _x, _y, 0
         );
         if let Some(bindings) = self.bindings.get(&PhysicalInput::MButton(button)) {
             for logical in bindings {
-                self.input_queue
-                    .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
+                self.input_queue.push_back((
+                    logical.clone(),
+                    PhysicalInput::MButton(button),
+                    PhysicalInputValue::Button(0, true),
+                ));
             }
         };
     }
 
-    pub fn mouse_button_up_event(&mut self, button: MouseButton, x: i32, y: i32) {
+    pub fn mouse_button_up_event(&mut self, button: MouseButton, _x: i32, _y: i32) {
         #[cfg(feature = "logging")]
         debug!(
             "raw mouse button up: {:?} | x: {} | y: {} | instance: {}",
-            button, x, y, 0
+            button, _x, _y, 0
         );
         if let Some(bindings) = self.bindings.get(&PhysicalInput::MButton(button)) {
             for logical in bindings {
-                self.input_queue
-                    .push_back((logical.clone(), PhysicalInputValue::Button(0, false)));
+                self.input_queue.push_back((
+                    logical.clone(),
+                    PhysicalInput::MButton(button),
+                    PhysicalInputValue::Button(0, false),
+                ));
             }
         };
     }
@@ -121,8 +128,11 @@ where
         );
         if let Some(bindings) = self.bindings.get(&PhysicalInput::MMotion) {
             for logical in bindings {
-                self.input_queue
-                    .push_back((logical.clone(), PhysicalInputValue::XY(0, x, y, xrel, yrel)));
+                self.input_queue.push_back((
+                    logical.clone(),
+                    PhysicalInput::MMotion,
+                    PhysicalInputValue::XY(0, x, y, xrel, yrel),
+                ));
             }
         };
     }
@@ -135,8 +145,11 @@ where
             if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelX(true)) {
                 while x > 0 {
                     for logical in bindings {
-                        self.input_queue
-                            .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
+                        self.input_queue.push_back((
+                            logical.clone(),
+                            PhysicalInput::MWheelX(true),
+                            PhysicalInputValue::Button(0, true),
+                        ));
                     }
                     x -= 1;
                 }
@@ -145,8 +158,11 @@ where
             if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelX(false)) {
                 while x < 0 {
                     for logical in bindings {
-                        self.input_queue
-                            .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
+                        self.input_queue.push_back((
+                            logical.clone(),
+                            PhysicalInput::MWheelX(false),
+                            PhysicalInputValue::Button(0, true),
+                        ));
                     }
                     x += 1;
                 }
@@ -156,8 +172,11 @@ where
             if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelY(true)) {
                 while y > 0 {
                     for logical in bindings {
-                        self.input_queue
-                            .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
+                        self.input_queue.push_back((
+                            logical.clone(),
+                            PhysicalInput::MWheelY(true),
+                            PhysicalInputValue::Button(0, true),
+                        ));
                     }
                     y -= 1;
                 }
@@ -166,8 +185,11 @@ where
             if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelY(false)) {
                 while y < 0 {
                     for logical in bindings {
-                        self.input_queue
-                            .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
+                        self.input_queue.push_back((
+                            logical.clone(),
+                            PhysicalInput::MWheelY(false),
+                            PhysicalInputValue::Button(0, true),
+                        ));
                     }
                     y += 1;
                 }
@@ -175,32 +197,36 @@ where
         }
     }
 
-    pub fn key_down_event(&mut self, keycode: Keycode, keymod: Mod, repeat: bool) {
+    pub fn key_down_event(&mut self, keycode: Keycode, _keymod: Mod, repeat: bool) {
         #[cfg(feature = "logging")]
         debug!(
-            "raw key down: {} | modifier: {:?} | repeat: {} | instance: {}",
-            keycode, keymod, repeat, 0,
+            "raw key down: {} | modifiers: {:?} | repeat: {} | instance: {}",
+            keycode, _keymod, repeat, 0,
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode)) {
-            if !repeat {
-                for logical in bindings {
-                    self.input_queue
-                        .push_back((logical.clone(), PhysicalInputValue::Button(0, true)));
-                }
+        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode, repeat)) {
+            for logical in bindings {
+                self.input_queue.push_back((
+                    logical.clone(),
+                    PhysicalInput::Key(keycode, repeat),
+                    PhysicalInputValue::Button(0, true),
+                ));
             }
         }
     }
 
-    pub fn key_up_event(&mut self, keycode: Keycode, keymod: Mod, repeat: bool) {
+    pub fn key_up_event(&mut self, keycode: Keycode, _keymod: Mod, repeat: bool) {
         #[cfg(feature = "logging")]
         debug!(
-            "raw key up: {} | modifier: {:?} | repeat: {} | instance: {}",
-            keycode, keymod, repeat, 0,
+            "raw key up: {} | modifiers: {:?} | repeat: {} | instance: {}",
+            keycode, _keymod, repeat, 0,
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode)) {
+        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode, repeat)) {
             for logical in bindings {
-                self.input_queue
-                    .push_back((logical.clone(), PhysicalInputValue::Button(0, false)));
+                self.input_queue.push_back((
+                    logical.clone(),
+                    PhysicalInput::Key(keycode, repeat),
+                    PhysicalInputValue::Button(0, false),
+                ));
             }
         }
     }
@@ -212,6 +238,7 @@ where
             for logical in bindings {
                 self.input_queue.push_back((
                     logical.clone(),
+                    PhysicalInput::CButton(button),
                     PhysicalInputValue::Button(instance_id, true),
                 ));
             }
@@ -225,6 +252,7 @@ where
             for logical in bindings {
                 self.input_queue.push_back((
                     logical.clone(),
+                    PhysicalInput::CButton(button),
                     PhysicalInputValue::Button(instance_id, false),
                 ));
             }
@@ -241,9 +269,18 @@ where
             for logical in bindings {
                 self.input_queue.push_back((
                     logical.clone(),
+                    PhysicalInput::CAxis(axis),
                     PhysicalInputValue::Axis(instance_id, value),
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sanity_check() {
+        assert_eq!(2 + 2, 4);
     }
 }

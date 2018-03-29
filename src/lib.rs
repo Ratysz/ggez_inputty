@@ -6,10 +6,6 @@ extern crate log;
 mod input_handler;
 mod macros;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub use input_handler::InputHandler;
+pub use input_handler::PhysicalInput;
+pub use input_handler::PhysicalInputValue;
