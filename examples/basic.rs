@@ -69,7 +69,6 @@ impl EventHandler for App {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         const DESIRED_UPS: u32 = 60;
         while timer::check_update_time(ctx, DESIRED_UPS) {
-            self.input_handler.update(&mut self.state)?;
             if self.state.should_exit {
                 ctx.quit()?;
             }
@@ -105,7 +104,7 @@ impl EventHandler for App {
         ).unwrap();
     }
 
-    impl_input_handling!(input_handler);
+    impl_input_handling!(input_handler, state);
 }
 
 pub fn main() {

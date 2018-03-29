@@ -1,5 +1,4 @@
 extern crate ggez;
-#[cfg(feature = "logging")]
 #[macro_use]
 extern crate log;
 

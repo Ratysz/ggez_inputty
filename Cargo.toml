@@ -7,19 +7,10 @@ authors = ["Ratys <alexander.sepity@gmail.com>"]
 name = "ggez_inputty"
 path = "src/lib.rs"
 
-[features]
-logging = ["log"]
-
 [dependencies]
 ggez = "0.4"
-log = { version = "0.4", optional = true }
+log = "0.4"
 
 [dev-dependencies]
 chrono = "0.4"
 fern = "0.5"
-log = "0.4"
-
-[[example]]
-name = "basic"
-path = "examples/basic.rs"
-required-features = ["logging"]

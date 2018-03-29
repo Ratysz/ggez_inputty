@@ -1,7 +1,7 @@
 use ggez::GameResult;
 use ggez::event::{Axis, Button, Keycode, Mod, MouseButton, MouseState};
 use std::hash::Hash;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 /// Gathers kinds of physical (read: SDL2-specific) sources of input under a single enum.
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
@@ -29,8 +29,7 @@ pub enum PhysicalInputValue {
 }
 
 type LogicalInputCallback<State> =
-    Box<Fn(&mut State, PhysicalInput, PhysicalInputValue) -> GameResult<()>>;
-type DynamicsCallback<State> = Box<Fn(&mut State) -> GameResult<()>>;
+    Box<Fn(&mut State, &PhysicalInput, &PhysicalInputValue) -> GameResult<()>>;
 
 /// A struct containing a mapping from physical input events to callbacks.
 pub struct InputHandler<LogicalInput, State>
@@ -38,9 +37,7 @@ where
     LogicalInput: Hash + Eq + Clone,
 {
     definitions: HashMap<LogicalInput, LogicalInputCallback<State>>,
-    dynamics: Vec<DynamicsCallback<State>>,
     bindings: HashMap<PhysicalInput, Vec<LogicalInput>>,
-    input_queue: VecDeque<(LogicalInput, PhysicalInput, PhysicalInputValue)>,
 }
 
 impl<LogicalInput, State> InputHandler<LogicalInput, State>
@@ -50,19 +47,12 @@ where
     pub fn new() -> Self {
         InputHandler {
             definitions: HashMap::new(),
-            dynamics: Vec::new(),
             bindings: HashMap::new(),
-            input_queue: VecDeque::new(),
         }
     }
 
     pub fn define(mut self, logical: LogicalInput, callback: LogicalInputCallback<State>) -> Self {
         self.definitions.insert(logical, callback);
-        self
-    }
-
-    pub fn add_dynamics(mut self, callback: DynamicsCallback<State>) -> Self {
-        self.dynamics.push(callback);
         self
     }
 
@@ -74,206 +64,198 @@ where
         self
     }
 
-    pub fn update(&mut self, state: &mut State) -> GameResult<()> {
-        for callback in &self.dynamics {
-            callback(state)?;
-        }
-        while let Some((logical, physical, value)) = self.input_queue.pop_front() {
-            if let Some(callback) = self.definitions.get(&logical) {
-                callback(state, physical, value)?;
+    fn resolve(&mut self, state: &mut State, physical: PhysicalInput, value: PhysicalInputValue) {
+        if let Some(bindings) = self.bindings.get(&physical) {
+            for logical in bindings {
+                if let Some(callback) = self.definitions.get(&logical) {
+                    if let Err(e) = callback(state, &physical, &value) {
+                        error!("{}", e);
+                    }
+                }
             }
         }
-        Ok(())
     }
 
-    pub fn mouse_button_down_event(&mut self, button: MouseButton, _x: i32, _y: i32) {
-        #[cfg(feature = "logging")]
+    pub fn mouse_button_down_event(
+        &mut self,
+        state: &mut State,
+        button: MouseButton,
+        _x: i32,
+        _y: i32,
+    ) {
         debug!(
             "raw mouse button down: {:?} | x: {} | y: {} | instance: {}",
             button, _x, _y, 0
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::MButton(button)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::MButton(button),
-                    PhysicalInputValue::Button(0, true),
-                ));
-            }
-        };
+        self.resolve(
+            state,
+            PhysicalInput::MButton(button),
+            PhysicalInputValue::Button(0, true),
+        );
     }
 
-    pub fn mouse_button_up_event(&mut self, button: MouseButton, _x: i32, _y: i32) {
-        #[cfg(feature = "logging")]
+    pub fn mouse_button_up_event(
+        &mut self,
+        state: &mut State,
+        button: MouseButton,
+        _x: i32,
+        _y: i32,
+    ) {
         debug!(
             "raw mouse button up: {:?} | x: {} | y: {} | instance: {}",
             button, _x, _y, 0
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::MButton(button)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::MButton(button),
-                    PhysicalInputValue::Button(0, false),
-                ));
-            }
-        };
+        self.resolve(
+            state,
+            PhysicalInput::MButton(button),
+            PhysicalInputValue::Button(0, false),
+        );
     }
 
-    pub fn mouse_motion_event(&mut self, _state: MouseState, x: i32, y: i32, xrel: i32, yrel: i32) {
-        #[cfg(feature = "logging")]
+    pub fn mouse_motion_event(
+        &mut self,
+        state: &mut State,
+        _state: MouseState,
+        x: i32,
+        y: i32,
+        xrel: i32,
+        yrel: i32,
+    ) {
         debug!(
             "raw mouse motion: x: {} | y: {} | xrel: {} | yrel: {} | instance: {}",
             x, y, xrel, yrel, 0,
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::MMotion) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::MMotion,
-                    PhysicalInputValue::XY(0, x, y, xrel, yrel),
-                ));
-            }
-        };
+        self.resolve(
+            state,
+            PhysicalInput::MMotion,
+            PhysicalInputValue::XY(0, x, y, xrel, yrel),
+        );
     }
 
-    pub fn mouse_wheel_event(&mut self, x: i32, y: i32) {
-        #[cfg(feature = "logging")]
+    pub fn mouse_wheel_event(&mut self, state: &mut State, x: i32, y: i32) {
         debug!("raw mouse wheel: x: {} | y: {} | instance: {}", x, y, 0);
         let (mut x, mut y) = (x, y);
         if x > 0 {
-            if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelX(true)) {
-                while x > 0 {
-                    for logical in bindings {
-                        self.input_queue.push_back((
-                            logical.clone(),
-                            PhysicalInput::MWheelX(true),
-                            PhysicalInputValue::Button(0, true),
-                        ));
-                    }
-                    x -= 1;
-                }
+            while x > 0 {
+                self.resolve(
+                    state,
+                    PhysicalInput::MWheelX(true),
+                    PhysicalInputValue::Button(0, true),
+                );
+                x -= 1;
             }
         } else if x < 0 {
-            if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelX(false)) {
-                while x < 0 {
-                    for logical in bindings {
-                        self.input_queue.push_back((
-                            logical.clone(),
-                            PhysicalInput::MWheelX(false),
-                            PhysicalInputValue::Button(0, true),
-                        ));
-                    }
-                    x += 1;
-                }
+            while x < 0 {
+                self.resolve(
+                    state,
+                    PhysicalInput::MWheelX(false),
+                    PhysicalInputValue::Button(0, true),
+                );
+                x += 1;
             }
         }
         if y > 0 {
-            if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelY(true)) {
-                while y > 0 {
-                    for logical in bindings {
-                        self.input_queue.push_back((
-                            logical.clone(),
-                            PhysicalInput::MWheelY(true),
-                            PhysicalInputValue::Button(0, true),
-                        ));
-                    }
-                    y -= 1;
-                }
+            while y > 0 {
+                self.resolve(
+                    state,
+                    PhysicalInput::MWheelY(true),
+                    PhysicalInputValue::Button(0, true),
+                );
+
+                y -= 1;
             }
         } else if y < 0 {
-            if let Some(bindings) = self.bindings.get(&PhysicalInput::MWheelY(false)) {
-                while y < 0 {
-                    for logical in bindings {
-                        self.input_queue.push_back((
-                            logical.clone(),
-                            PhysicalInput::MWheelY(false),
-                            PhysicalInputValue::Button(0, true),
-                        ));
-                    }
-                    y += 1;
-                }
+            while y < 0 {
+                self.resolve(
+                    state,
+                    PhysicalInput::MWheelY(false),
+                    PhysicalInputValue::Button(0, true),
+                );
+                y += 1;
             }
         }
     }
 
-    pub fn key_down_event(&mut self, keycode: Keycode, _keymod: Mod, repeat: bool) {
-        #[cfg(feature = "logging")]
+    pub fn key_down_event(
+        &mut self,
+        state: &mut State,
+        keycode: Keycode,
+        _keymod: Mod,
+        repeat: bool,
+    ) {
         debug!(
             "raw key down: {} | modifiers: {:?} | repeat: {} | instance: {}",
             keycode, _keymod, repeat, 0,
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode, repeat)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::Key(keycode, repeat),
-                    PhysicalInputValue::Button(0, true),
-                ));
-            }
-        }
+        self.resolve(
+            state,
+            PhysicalInput::Key(keycode, repeat),
+            PhysicalInputValue::Button(0, true),
+        );
     }
 
-    pub fn key_up_event(&mut self, keycode: Keycode, _keymod: Mod, repeat: bool) {
-        #[cfg(feature = "logging")]
+    pub fn key_up_event(
+        &mut self,
+        state: &mut State,
+        keycode: Keycode,
+        _keymod: Mod,
+        repeat: bool,
+    ) {
         debug!(
             "raw key up: {} | modifiers: {:?} | repeat: {} | instance: {}",
             keycode, _keymod, repeat, 0,
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::Key(keycode, repeat)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::Key(keycode, repeat),
-                    PhysicalInputValue::Button(0, false),
-                ));
-            }
-        }
+        self.resolve(
+            state,
+            PhysicalInput::Key(keycode, repeat),
+            PhysicalInputValue::Button(0, false),
+        );
     }
 
-    pub fn controller_button_down_event(&mut self, button: Button, instance_id: i32) {
-        #[cfg(feature = "logging")]
+    pub fn controller_button_down_event(
+        &mut self,
+        state: &mut State,
+        button: Button,
+        instance_id: i32,
+    ) {
         debug!("raw button down: {:?} | instance: {}", button, instance_id,);
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::CButton(button)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::CButton(button),
-                    PhysicalInputValue::Button(instance_id, true),
-                ));
-            }
-        }
+        self.resolve(
+            state,
+            PhysicalInput::CButton(button),
+            PhysicalInputValue::Button(instance_id, true),
+        );
     }
 
-    pub fn controller_button_up_event(&mut self, button: Button, instance_id: i32) {
-        #[cfg(feature = "logging")]
+    pub fn controller_button_up_event(
+        &mut self,
+        state: &mut State,
+        button: Button,
+        instance_id: i32,
+    ) {
         debug!("raw button up: {:?} | instance: {}", button, instance_id,);
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::CButton(button)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::CButton(button),
-                    PhysicalInputValue::Button(instance_id, false),
-                ));
-            }
-        }
+        self.resolve(
+            state,
+            PhysicalInput::CButton(button),
+            PhysicalInputValue::Button(instance_id, false),
+        );
     }
 
-    pub fn controller_axis_event(&mut self, axis: Axis, value: i16, instance_id: i32) {
-        #[cfg(feature = "logging")]
+    pub fn controller_axis_event(
+        &mut self,
+        state: &mut State,
+        axis: Axis,
+        value: i16,
+        instance_id: i32,
+    ) {
         debug!(
             "raw axis event: {:?} | {} | instance: {}",
             axis, value, instance_id
         );
-        if let Some(bindings) = self.bindings.get(&PhysicalInput::CAxis(axis)) {
-            for logical in bindings {
-                self.input_queue.push_back((
-                    logical.clone(),
-                    PhysicalInput::CAxis(axis),
-                    PhysicalInputValue::Axis(instance_id, value),
-                ));
-            }
-        }
+        self.resolve(
+            state,
+            PhysicalInput::CAxis(axis),
+            PhysicalInputValue::Axis(instance_id, value),
+        );
     }
 }
 
