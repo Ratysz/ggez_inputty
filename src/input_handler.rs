@@ -81,7 +81,7 @@ where
     ) {
         if let Some(bindings) = self.bindings.get(&physical) {
             for logical in bindings {
-                if let Some(callback) = self.definitions.get(&logical) {
+                if let Some(callback) = self.definitions.get(logical) {
                     if let Err(e) = callback(state, physical, value) {
                         error!(
                             "Logical input callback {:?} ( {:?}, {:?} ) returned an error: {}",
@@ -138,7 +138,7 @@ where
     pub fn mouse_motion_event(
         &mut self,
         state: &mut State,
-        _state: MouseState,
+        _mouse_state: MouseState,
         x: i32,
         y: i32,
         xrel: i32,

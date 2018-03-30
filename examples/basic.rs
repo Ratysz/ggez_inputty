@@ -41,6 +41,7 @@ impl InputState {
 
 struct App {
     rotation_angle: f32,
+    mesh: graphics::Mesh,
     input_state: InputState,
     input_handler: InputHandler<Input, InputState>,
 }
@@ -49,18 +50,18 @@ impl App {
     fn new(ctx: &mut Context) -> GameResult<App> {
         let input_state = InputState::new();
         let input_handler = InputHandler::<Input, InputState>::new()
-            .define(Input::Exit, |state, physical, value| -> InputtyResult {
+            .define(Input::Exit, |_state, _physical, _value| -> InputtyResult {
                 info!(
                     "Logical input 'Exit' triggered via {:?}: {:?}",
-                    physical, value
+                    _physical, _value
                 );
-                state.should_exit = true;
+                _state.should_exit = true;
                 Ok(())
             })
             .define(
                 Input::ReturnError,
-                |state, physical, value| -> InputtyResult {
-                    if let PIV::Button(true) = value {
+                |_state, _physical, _value| -> InputtyResult {
+                    if let PIV::Button(true) = _value {
                         info!("Propagating an error");
                         Err("Oh no!")
                     } else {
@@ -70,24 +71,24 @@ impl App {
             )
             .define(
                 Input::SpinAnalog,
-                |state, physical, value| -> InputtyResult {
-                    if let PIV::Axis(raw_axis) = value {
-                        state.spin_axis_state = VirtualAxisState::Ignore;
-                        state.spin_axis = raw_axis as f32 / i16::max_value() as f32;
+                |_state, _physical, _value| -> InputtyResult {
+                    if let PIV::Axis(raw_axis) = _value {
+                        _state.spin_axis_state = VirtualAxisState::Ignore;
+                        _state.spin_axis = raw_axis as f32 / i16::max_value() as f32;
                     }
                     Ok(())
                 },
             )
             .define(
                 Input::SpinDigitalPos,
-                |state, physical, value| -> InputtyResult {
-                    virtual_axis::axis_input_pos(&mut state.spin_axis_state, value)
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_pos(&mut _state.spin_axis_state, _value)
                 },
             )
             .define(
                 Input::SpinDigitalNeg,
-                |state, physical, value| -> InputtyResult {
-                    virtual_axis::axis_input_neg(&mut state.spin_axis_state, value)
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_neg(&mut _state.spin_axis_state, _value)
                 },
             )
             .bind(PI::Key(Keycode::Escape, true), Input::Exit)
@@ -99,8 +100,23 @@ impl App {
             .bind(PI::Key(Keycode::Left, false), Input::SpinDigitalNeg)
             .bind(PI::Key(Keycode::Right, false), Input::SpinDigitalPos);
 
+        let mesh = graphics::MeshBuilder::new()
+            .line(
+                &[
+                    Point2::new(0.0, -32.0),
+                    Point2::new(-30.0, 20.0),
+                    Point2::new(30.0, 20.0),
+                    Point2::new(0.0, -32.0),
+                ],
+                1.0,
+            )
+            .ellipse(DrawMode::Fill, Point2::new(0.0, -7.0), 2.0, 15.0, 2.0)
+            .circle(DrawMode::Fill, Point2::new(0.0, 12.0), 2.0, 2.0)
+            .build(ctx)?;
+
         Ok(App {
             rotation_angle: 0.0,
+            mesh,
             input_state,
             input_handler,
         })
@@ -128,22 +144,9 @@ impl EventHandler for App {
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx);
-        let mesh = graphics::MeshBuilder::new()
-            .line(
-                &[
-                    Point2::new(0.0, -32.0),
-                    Point2::new(-30.0, 20.0),
-                    Point2::new(30.0, 20.0),
-                    Point2::new(0.0, -32.0),
-                ],
-                1.0,
-            )
-            .ellipse(DrawMode::Fill, Point2::new(0.0, -7.0), 2.0, 15.0, 2.0)
-            .circle(DrawMode::Fill, Point2::new(0.0, 12.0), 2.0, 2.0)
-            .build(ctx)?;
         graphics::draw(
             ctx,
-            &mesh,
+            &self.mesh,
             graphics::Point2::new(150.0, 150.0),
             self.rotation_angle,
         ).unwrap();
