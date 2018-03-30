@@ -10,9 +10,9 @@ use ggez::{Context, ContextBuilder, GameResult};
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::graphics::{self, DrawMode, Point2};
 use ggez::event::{run, Axis, Button, EventHandler, Keycode};
-use ggez::nalgebra;
 use ggez::timer;
 use ggez_inputty::{InputHandler, InputtyResult, PhysicalInput as PI, PhysicalInputValue as PIV};
+use ggez_inputty::virtual_axis::{self, VirtualAxisState};
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Input {
@@ -21,14 +21,6 @@ enum Input {
     SpinDigitalNeg,
     ReturnError,
     Exit,
-}
-
-#[derive(Hash, PartialEq, Eq, Clone, Debug)]
-enum VirtualAxisState {
-    Increase,
-    Decrease,
-    Relax,
-    Ignore,
 }
 
 struct InputState {
@@ -48,7 +40,6 @@ impl InputState {
 }
 
 struct App {
-    //font: graphics::Font,
     rotation_angle: f32,
     input_state: InputState,
     input_handler: InputHandler<Input, InputState>,
@@ -56,7 +47,6 @@ struct App {
 
 impl App {
     fn new(ctx: &mut Context) -> GameResult<App> {
-        //let font = graphics::Font::new(ctx, "/DejaVuSerif.ttf", 48)?;
         let input_state = InputState::new();
         let input_handler = InputHandler::<Input, InputState>::new()
             .define(Input::Exit, |state, physical, value| -> InputtyResult {
@@ -91,27 +81,13 @@ impl App {
             .define(
                 Input::SpinDigitalPos,
                 |state, physical, value| -> InputtyResult {
-                    if let PIV::Button(raw_button) = value {
-                        if raw_button {
-                            state.spin_axis_state = VirtualAxisState::Increase;
-                        } else if state.spin_axis_state != VirtualAxisState::Decrease {
-                            state.spin_axis_state = VirtualAxisState::Relax;
-                        }
-                    }
-                    Ok(())
+                    virtual_axis::axis_input_pos(&mut state.spin_axis_state, value)
                 },
             )
             .define(
                 Input::SpinDigitalNeg,
                 |state, physical, value| -> InputtyResult {
-                    if let PIV::Button(raw_button) = value {
-                        if raw_button {
-                            state.spin_axis_state = VirtualAxisState::Decrease;
-                        } else if state.spin_axis_state != VirtualAxisState::Increase {
-                            state.spin_axis_state = VirtualAxisState::Relax;
-                        }
-                    }
-                    Ok(())
+                    virtual_axis::axis_input_neg(&mut state.spin_axis_state, value)
                 },
             )
             .bind(PI::Key(Keycode::Escape, true), Input::Exit)
@@ -121,12 +97,9 @@ impl App {
             .bind(PI::CButton(0, Button::DPadLeft), Input::SpinDigitalNeg)
             .bind(PI::CButton(0, Button::DPadRight), Input::SpinDigitalPos)
             .bind(PI::Key(Keycode::Left, false), Input::SpinDigitalNeg)
-            .bind(PI::Key(Keycode::Right, false), Input::SpinDigitalPos)
-            .bind(PI::Key(Keycode::Left, true), Input::SpinDigitalNeg)
-            .bind(PI::Key(Keycode::Right, true), Input::SpinDigitalPos);
+            .bind(PI::Key(Keycode::Right, false), Input::SpinDigitalPos);
 
         Ok(App {
-            //font,
             rotation_angle: 0.0,
             input_state,
             input_handler,
@@ -139,26 +112,13 @@ impl EventHandler for App {
         const DESIRED_UPS: u32 = 60;
         while timer::check_update_time(ctx, DESIRED_UPS) {
             self.rotation_angle += self.input_state.spin_axis / 10.0;
-            match self.input_state.spin_axis_state {
-                VirtualAxisState::Relax => {
-                    if self.input_state.spin_axis > 0.1 {
-                        self.input_state.spin_axis -= 0.1;
-                    } else if self.input_state.spin_axis < -0.1 {
-                        self.input_state.spin_axis += 0.1;
-                    } else {
-                        self.input_state.spin_axis = 0.0;
-                    }
-                }
-                VirtualAxisState::Increase => {
-                    self.input_state.spin_axis += 0.1;
-                }
-                VirtualAxisState::Decrease => {
-                    self.input_state.spin_axis -= 0.1;
-                }
-                VirtualAxisState::Ignore => (),
-            }
-            self.input_state.spin_axis = nalgebra::clamp(self.input_state.spin_axis, -1.0, 1.0);
-            //self.input_state.
+            virtual_axis::axis_update(
+                &mut self.input_state.spin_axis,
+                &self.input_state.spin_axis_state,
+                0.1,
+                0.2,
+                0.1,
+            );
             if self.input_state.should_exit {
                 ctx.quit()?;
             }
@@ -187,12 +147,6 @@ impl EventHandler for App {
             graphics::Point2::new(150.0, 150.0),
             self.rotation_angle,
         ).unwrap();
-        /*let text = graphics::Text::new(
-            ctx,
-            &format!("Spin: {}", self.input_state.spin_axis),
-            &self.font,
-        ).unwrap();
-        graphics::draw(ctx, &text, graphics::Point2::new(50.0, 250.0), 0.0);*/
         graphics::present(ctx);
         timer::yield_now();
         Ok(())
