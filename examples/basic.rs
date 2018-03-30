@@ -11,11 +11,12 @@ use ggez::conf::{WindowMode, WindowSetup};
 use ggez::graphics::{self, DrawMode, Point2};
 use ggez::event::{run, Button, EventHandler, Keycode};
 use ggez::timer;
-use ggez_inputty::{InputHandler, PhysicalInput as PI, PhysicalInputValue as PIV};
+use ggez_inputty::{InputHandler, InputtyResult, PhysicalInput as PI, PhysicalInputValue as PIV};
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Input {
     Toggle,
+    ReturnError,
     Exit,
 }
 
@@ -43,20 +44,28 @@ impl App {
         let state = State::new();
 
         let input_handler = InputHandler::<Input, State>::new()
+            .define(Input::Exit, |state, physical, value| -> InputtyResult {
+                info!(
+                    "Logical input 'Exit' triggered via {:?}: {:?}",
+                    physical, value
+                );
+                state.should_exit = true;
+                Ok(())
+            })
             .define(
-                Input::Exit,
-                Box::new(|state, physical, value| -> GameResult<()> {
-                    info!(
-                        "Logical input 'Exit' triggered via {:?}: {:?}",
-                        physical, value
-                    );
-                    state.should_exit = true;
-                    Ok(())
-                }),
+                Input::ReturnError,
+                |state, physical, value| -> InputtyResult {
+                    if let PIV::Button(true) = value {
+                        info!("Propagating an error");
+                        Err("Oh no!")
+                    } else {
+                        Ok(())
+                    }
+                },
             )
-            //.bind(PI::Key(Keycode::Escape, false), Input::Exit)
             .bind(PI::Key(Keycode::Escape, true), Input::Exit)
-            .bind(PI::CButton(Button::Back), Input::Exit);
+            .bind(PI::Key(Keycode::E, false), Input::ReturnError)
+            .bind(PI::CButton(0, Button::Back), Input::Exit);
 
         Ok(App {
             state,

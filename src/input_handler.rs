@@ -1,5 +1,5 @@
-use ggez::GameResult;
 use ggez::event::{Axis, Button, Keycode, Mod, MouseButton, MouseState};
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::collections::HashMap;
 
@@ -7,42 +7,48 @@ use std::collections::HashMap;
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum PhysicalInput {
     // TODO: Look at joysticks, etc.
-    CAxis(Axis),
-    CButton(Button),
+    /// Instance ID, axis.
+    CAxis(i32, Axis),
+    /// Instante ID, button.
+    CButton(i32, Button),
     MButton(MouseButton),
+    /// Positive/negative.
     MWheelX(bool),
+    /// Positive/negative.
     MWheelY(bool),
     MMotion,
+    /// Keycode, repeated.
     Key(Keycode, bool),
 }
 
 /// Facilitates passing concrete values to parsing callbacks; types are as used in SDL2.
-#[derive(Debug)]
+#[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum PhysicalInputValue {
     // TODO: Look at joysticks, etc.
-    /// Instance ID, value.
-    Axis(i32, i16),
-    /// Instance ID, value.
-    Button(i32, bool),
-    /// Instance ID, X, Y, relative X, relative Y.
-    XY(i32, i32, i32, i32, i32),
+    /// Raw value.
+    Axis(i16),
+    /// Down/up.
+    Button(bool),
+    /// X, Y, relative X, relative Y.
+    XY(i32, i32, i32, i32),
 }
 
 type LogicalInputCallback<State> =
-    Box<Fn(&mut State, &PhysicalInput, &PhysicalInputValue) -> GameResult<()>>;
+    Fn(&mut State, PhysicalInput, PhysicalInputValue) -> InputtyResult;
+pub type InputtyResult = Result<(), &'static str>;
 
 /// A struct containing a mapping from physical input events to callbacks.
 pub struct InputHandler<LogicalInput, State>
 where
-    LogicalInput: Hash + Eq + Clone,
+    LogicalInput: Hash + Eq + Clone + Debug,
 {
-    definitions: HashMap<LogicalInput, LogicalInputCallback<State>>,
+    definitions: HashMap<LogicalInput, Box<LogicalInputCallback<State>>>,
     bindings: HashMap<PhysicalInput, Vec<LogicalInput>>,
 }
 
 impl<LogicalInput, State> InputHandler<LogicalInput, State>
 where
-    LogicalInput: Hash + Eq + Clone,
+    LogicalInput: Hash + Eq + Clone + Debug,
 {
     pub fn new() -> Self {
         InputHandler {
@@ -51,8 +57,11 @@ where
         }
     }
 
-    pub fn define(mut self, logical: LogicalInput, callback: LogicalInputCallback<State>) -> Self {
-        self.definitions.insert(logical, callback);
+    pub fn define<F>(mut self, logical: LogicalInput, callback: F) -> Self
+    where
+        F: Fn(&mut State, PhysicalInput, PhysicalInputValue) -> InputtyResult + 'static,
+    {
+        self.definitions.insert(logical, Box::new(callback));
         self
     }
 
@@ -64,12 +73,20 @@ where
         self
     }
 
-    fn resolve(&mut self, state: &mut State, physical: PhysicalInput, value: PhysicalInputValue) {
+    pub fn resolve_and_invoke(
+        &mut self,
+        state: &mut State,
+        physical: PhysicalInput,
+        value: PhysicalInputValue,
+    ) {
         if let Some(bindings) = self.bindings.get(&physical) {
             for logical in bindings {
                 if let Some(callback) = self.definitions.get(&logical) {
-                    if let Err(e) = callback(state, &physical, &value) {
-                        error!("{}", e);
+                    if let Err(e) = callback(state, physical, value) {
+                        error!(
+                            "Logical input callback {:?} ( {:?}, {:?} ) returned an error: {}",
+                            logical, &physical, &value, e
+                        );
                     }
                 }
             }
@@ -83,14 +100,17 @@ where
         _x: i32,
         _y: i32,
     ) {
-        debug!(
+        trace!(
             "raw mouse button down: {:?} | x: {} | y: {} | instance: {}",
-            button, _x, _y, 0
+            button,
+            _x,
+            _y,
+            0
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
             PhysicalInput::MButton(button),
-            PhysicalInputValue::Button(0, true),
+            PhysicalInputValue::Button(true),
         );
     }
 
@@ -101,14 +121,17 @@ where
         _x: i32,
         _y: i32,
     ) {
-        debug!(
+        trace!(
             "raw mouse button up: {:?} | x: {} | y: {} | instance: {}",
-            button, _x, _y, 0
+            button,
+            _x,
+            _y,
+            0
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
             PhysicalInput::MButton(button),
-            PhysicalInputValue::Button(0, false),
+            PhysicalInputValue::Button(false),
         );
     }
 
@@ -121,55 +144,59 @@ where
         xrel: i32,
         yrel: i32,
     ) {
-        debug!(
+        trace!(
             "raw mouse motion: x: {} | y: {} | xrel: {} | yrel: {} | instance: {}",
-            x, y, xrel, yrel, 0,
+            x,
+            y,
+            xrel,
+            yrel,
+            0,
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
             PhysicalInput::MMotion,
-            PhysicalInputValue::XY(0, x, y, xrel, yrel),
+            PhysicalInputValue::XY(x, y, xrel, yrel),
         );
     }
 
     pub fn mouse_wheel_event(&mut self, state: &mut State, x: i32, y: i32) {
-        debug!("raw mouse wheel: x: {} | y: {} | instance: {}", x, y, 0);
+        trace!("raw mouse wheel: x: {} | y: {} | instance: {}", x, y, 0);
         let (mut x, mut y) = (x, y);
         if x > 0 {
             while x > 0 {
-                self.resolve(
+                self.resolve_and_invoke(
                     state,
                     PhysicalInput::MWheelX(true),
-                    PhysicalInputValue::Button(0, true),
+                    PhysicalInputValue::Button(true),
                 );
                 x -= 1;
             }
         } else if x < 0 {
             while x < 0 {
-                self.resolve(
+                self.resolve_and_invoke(
                     state,
                     PhysicalInput::MWheelX(false),
-                    PhysicalInputValue::Button(0, true),
+                    PhysicalInputValue::Button(true),
                 );
                 x += 1;
             }
         }
         if y > 0 {
             while y > 0 {
-                self.resolve(
+                self.resolve_and_invoke(
                     state,
                     PhysicalInput::MWheelY(true),
-                    PhysicalInputValue::Button(0, true),
+                    PhysicalInputValue::Button(true),
                 );
 
                 y -= 1;
             }
         } else if y < 0 {
             while y < 0 {
-                self.resolve(
+                self.resolve_and_invoke(
                     state,
                     PhysicalInput::MWheelY(false),
-                    PhysicalInputValue::Button(0, true),
+                    PhysicalInputValue::Button(true),
                 );
                 y += 1;
             }
@@ -183,14 +210,17 @@ where
         _keymod: Mod,
         repeat: bool,
     ) {
-        debug!(
+        trace!(
             "raw key down: {} | modifiers: {:?} | repeat: {} | instance: {}",
-            keycode, _keymod, repeat, 0,
+            keycode,
+            _keymod,
+            repeat,
+            0,
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
             PhysicalInput::Key(keycode, repeat),
-            PhysicalInputValue::Button(0, true),
+            PhysicalInputValue::Button(true),
         );
     }
 
@@ -201,14 +231,17 @@ where
         _keymod: Mod,
         repeat: bool,
     ) {
-        debug!(
+        trace!(
             "raw key up: {} | modifiers: {:?} | repeat: {} | instance: {}",
-            keycode, _keymod, repeat, 0,
+            keycode,
+            _keymod,
+            repeat,
+            0,
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
             PhysicalInput::Key(keycode, repeat),
-            PhysicalInputValue::Button(0, false),
+            PhysicalInputValue::Button(false),
         );
     }
 
@@ -218,11 +251,11 @@ where
         button: Button,
         instance_id: i32,
     ) {
-        debug!("raw button down: {:?} | instance: {}", button, instance_id,);
-        self.resolve(
+        trace!("raw button down: {:?} | instance: {}", button, instance_id,);
+        self.resolve_and_invoke(
             state,
-            PhysicalInput::CButton(button),
-            PhysicalInputValue::Button(instance_id, true),
+            PhysicalInput::CButton(instance_id, button),
+            PhysicalInputValue::Button(true),
         );
     }
 
@@ -232,11 +265,11 @@ where
         button: Button,
         instance_id: i32,
     ) {
-        debug!("raw button up: {:?} | instance: {}", button, instance_id,);
-        self.resolve(
+        trace!("raw button up: {:?} | instance: {}", button, instance_id,);
+        self.resolve_and_invoke(
             state,
-            PhysicalInput::CButton(button),
-            PhysicalInputValue::Button(instance_id, false),
+            PhysicalInput::CButton(instance_id, button),
+            PhysicalInputValue::Button(false),
         );
     }
 
@@ -247,14 +280,16 @@ where
         value: i16,
         instance_id: i32,
     ) {
-        debug!(
+        trace!(
             "raw axis event: {:?} | {} | instance: {}",
-            axis, value, instance_id
+            axis,
+            value,
+            instance_id
         );
-        self.resolve(
+        self.resolve_and_invoke(
             state,
-            PhysicalInput::CAxis(axis),
-            PhysicalInputValue::Axis(instance_id, value),
+            PhysicalInput::CAxis(instance_id, axis),
+            PhysicalInputValue::Axis(value),
         );
     }
 }
