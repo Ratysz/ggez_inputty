@@ -85,7 +85,7 @@ where
                     if let Err(e) = callback(state, physical, value) {
                         error!(
                             "Logical input callback {:?} ( {:?}, {:?} ) returned an error: {}",
-                            logical, &physical, &value, e
+                            logical, physical, value, e
                         );
                     }
                 }
