@@ -169,8 +169,8 @@ pub fn main() {
     fern::Dispatch::new()
         .format(|out, msg, rec| {
             out.finish(format_args!(
-                "{}[{}][{}] {}",
-                chrono::Local::now().format("[%H:%M:%S]"),
+                "[{}][{}][{}] {}",
+                chrono::Local::now().format("%H:%M:%S"),
                 rec.target(),
                 rec.level(),
                 msg,
