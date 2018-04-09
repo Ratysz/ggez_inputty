@@ -18,10 +18,10 @@ use ggez_inputty::virtual_axis::{self, VirtualAxisState};
 
 const BALL_DIM: f32 = 0.005;
 const BALL_MAX_VELOCITY: f32 = 0.015;
-const FIELD_DIM: (f32, f32) = (1.0, 1.2);
+const FIELD_DIM: (f32, f32) = (1.5, 1.0);
 const PADDLE_DIM: (f32, f32) = (0.01, 0.10);
 const PADDLE_PAD: f32 = 0.05;
-const PADDLE_MAX_VELOCITY: f32 = 0.01;
+const PADDLE_MAX_VELOCITY: f32 = 0.02;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Input {
@@ -32,26 +32,99 @@ enum Input {
     Exit,
 }
 
+struct PlayerInputState {
+    axis: f32,
+    axis_state: VirtualAxisState,
+    pause_timer: u32,
+}
+
+impl PlayerInputState {
+    fn new() -> Self {
+        PlayerInputState {
+            axis: 0.0,
+            axis_state: VirtualAxisState::Relax,
+            pause_timer: 0,
+        }
+    }
+
+    fn update(&mut self) {
+        virtual_axis::axis_update(&mut self.axis, &self.axis_state, 0.1, 0.2, 0.1);
+        if self.pause_timer > 0 {
+            self.pause_timer -= 1;
+        }
+    }
+}
+
 struct InputState {
-    paddle_l: (f32, VirtualAxisState),
-    paddle_r: (f32, VirtualAxisState),
-    pause_flag: bool,
-    should_exit: bool,
+    paddle_l: PlayerInputState,
+    paddle_r: PlayerInputState,
 }
 
 impl InputState {
     fn new() -> Self {
         InputState {
-            paddle_l: (0.0, VirtualAxisState::Relax),
-            paddle_r: (0.0, VirtualAxisState::Relax),
-            pause_flag: false,
-            should_exit: false,
+            paddle_l: PlayerInputState::new(),
+            paddle_r: PlayerInputState::new(),
         }
     }
 
     fn update(&mut self) {
-        virtual_axis::axis_update(&mut self.paddle_l.0, &self.paddle_l.1, 0.1, 0.2, 0.1);
-        virtual_axis::axis_update(&mut self.paddle_r.0, &self.paddle_r.1, 0.1, 0.2, 0.1);
+        self.paddle_l.update();
+        self.paddle_r.update();
+    }
+
+    fn create_handler() -> InputHandler<Input, InputState> {
+        InputHandler::<Input, InputState>::new()
+            .define(
+                Input::PaddleAnalog(0),
+                |_state, _physical, _value| -> InputtyResult {
+                    if let PIV::Axis(raw_axis) = _value {
+                        _state.paddle_l.axis_state = VirtualAxisState::Ignore;
+                        _state.paddle_l.axis = raw_axis as f32 / i16::max_value() as f32;
+                    }
+                    Ok(())
+                },
+            )
+            .define(
+                Input::PaddleUp(0),
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_neg(&mut _state.paddle_l.axis_state, _value)
+                },
+            )
+            .define(
+                Input::PaddleDown(0),
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_pos(&mut _state.paddle_l.axis_state, _value)
+                },
+            )
+            .define(
+                Input::PaddleAnalog(1),
+                |_state, _physical, _value| -> InputtyResult {
+                    if let PIV::Axis(raw_axis) = _value {
+                        _state.paddle_r.axis_state = VirtualAxisState::Ignore;
+                        _state.paddle_r.axis = raw_axis as f32 / i16::max_value() as f32;
+                    }
+                    Ok(())
+                },
+            )
+            .define(
+                Input::PaddleUp(1),
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_neg(&mut _state.paddle_r.axis_state, _value)
+                },
+            )
+            .define(
+                Input::PaddleDown(1),
+                |_state, _physical, _value| -> InputtyResult {
+                    virtual_axis::axis_input_pos(&mut _state.paddle_r.axis_state, _value)
+                },
+            )
+            .bind(PI::CAxis(0, Axis::LeftY), Input::PaddleAnalog(0))
+            .bind(PI::Key(Keycode::W, false), Input::PaddleUp(0))
+            .bind(PI::Key(Keycode::S, false), Input::PaddleDown(0))
+            .bind(PI::CAxis(1, Axis::LeftY), Input::PaddleAnalog(1))
+            .bind(PI::Key(Keycode::Up, false), Input::PaddleUp(1))
+            .bind(PI::Key(Keycode::Down, false), Input::PaddleDown(1))
     }
 }
 
@@ -97,7 +170,7 @@ impl MeshBank {
         graphics::draw(
             ctx,
             &self.paddle,
-            Point2::new(1.0 - PADDLE_PAD, game_state.paddle_r_pos),
+            Point2::new(FIELD_DIM.0 - PADDLE_PAD, game_state.paddle_r_pos),
             0.0,
         )?;
         graphics::draw(
@@ -115,6 +188,7 @@ struct GameState {
     paddle_r_pos: f32,
     ball_pos: (f32, f32),
     ball_vel: (f32, f32),
+    should_exit: bool,
 }
 
 impl GameState {
@@ -133,11 +207,12 @@ impl GameState {
                 },
                 BALL_MAX_VELOCITY * (0.5 - rand::random::<f32>()),
             ),
+            should_exit: false,
         }
     }
 
     fn update(&mut self, input_state: &InputState) {
-        let paddle_l_vel = PADDLE_MAX_VELOCITY * input_state.paddle_l.0;
+        let paddle_l_vel = PADDLE_MAX_VELOCITY * input_state.paddle_l.axis;
         self.paddle_l_pos += paddle_l_vel;
         self.paddle_l_pos = nalgebra::clamp(
             self.paddle_l_pos,
@@ -145,7 +220,7 @@ impl GameState {
             FIELD_DIM.1 - PADDLE_DIM.1 / 2.0,
         );
 
-        let paddle_r_vel = PADDLE_MAX_VELOCITY * input_state.paddle_r.0;
+        let paddle_r_vel = PADDLE_MAX_VELOCITY * input_state.paddle_r.axis;
         self.paddle_r_pos += paddle_r_vel;
         self.paddle_r_pos = nalgebra::clamp(
             self.paddle_r_pos,
@@ -184,14 +259,14 @@ impl GameState {
             }
         }
 
-        if self.ball_pos.0 < 1.0 - PADDLE_PAD + PADDLE_DIM.0 / 2.0
-            && self.ball_pos.0 > 1.0 - PADDLE_PAD - PADDLE_DIM.0 / 2.0
+        if self.ball_pos.0 < FIELD_DIM.0 - PADDLE_PAD + PADDLE_DIM.0 / 2.0
+            && self.ball_pos.0 > FIELD_DIM.0 - PADDLE_PAD - PADDLE_DIM.0 / 2.0
         {
             if self.ball_pos.1 < self.paddle_r_pos + PADDLE_DIM.1 / 2.0
                 && self.ball_pos.1 > self.paddle_r_pos - PADDLE_DIM.1 / 2.0
             {
-                if self.ball_pos.0 < 1.0 - PADDLE_PAD + PADDLE_DIM.0 / 4.0
-                    && self.ball_pos.0 > 1.0 - PADDLE_PAD - PADDLE_DIM.0 / 4.0
+                if self.ball_pos.0 < FIELD_DIM.0 - PADDLE_PAD + PADDLE_DIM.0 / 4.0
+                    && self.ball_pos.0 > FIELD_DIM.0 - PADDLE_PAD - PADDLE_DIM.0 / 4.0
                     && (self.ball_pos.1 > self.paddle_r_pos + PADDLE_DIM.1 / 2.0 - PADDLE_DIM.0
                         || self.ball_pos.1 < self.paddle_r_pos - PADDLE_DIM.1 / 2.0 + PADDLE_DIM.0)
                 {
@@ -221,57 +296,7 @@ impl App {
         let mesh = MeshBank::new(ctx)?;
         let game_state = GameState::new();
         let input_state = InputState::new();
-        let input_handler = InputHandler::<Input, InputState>::new()
-            .define(
-                Input::PaddleAnalog(0),
-                |_state, _physical, _value| -> InputtyResult {
-                    if let PIV::Axis(raw_axis) = _value {
-                        _state.paddle_l.1 = VirtualAxisState::Ignore;
-                        _state.paddle_l.0 = raw_axis as f32 / i16::max_value() as f32;
-                    }
-                    Ok(())
-                },
-            )
-            .define(
-                Input::PaddleUp(0),
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_neg(&mut _state.paddle_l.1, _value)
-                },
-            )
-            .define(
-                Input::PaddleDown(0),
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_pos(&mut _state.paddle_l.1, _value)
-                },
-            )
-            .define(
-                Input::PaddleAnalog(1),
-                |_state, _physical, _value| -> InputtyResult {
-                    if let PIV::Axis(raw_axis) = _value {
-                        _state.paddle_r.1 = VirtualAxisState::Ignore;
-                        _state.paddle_r.0 = raw_axis as f32 / i16::max_value() as f32;
-                    }
-                    Ok(())
-                },
-            )
-            .define(
-                Input::PaddleUp(1),
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_neg(&mut _state.paddle_r.1, _value)
-                },
-            )
-            .define(
-                Input::PaddleDown(1),
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_pos(&mut _state.paddle_r.1, _value)
-                },
-            )
-            .bind(PI::CAxis(0, Axis::LeftY), Input::PaddleAnalog(0))
-            .bind(PI::Key(Keycode::W, false), Input::PaddleUp(0))
-            .bind(PI::Key(Keycode::S, false), Input::PaddleDown(0))
-            .bind(PI::CAxis(1, Axis::LeftY), Input::PaddleAnalog(1))
-            .bind(PI::Key(Keycode::Up, false), Input::PaddleUp(1))
-            .bind(PI::Key(Keycode::Down, false), Input::PaddleDown(1));
+        let input_handler = InputState::create_handler();
 
         Ok(App {
             mesh,
@@ -288,7 +313,7 @@ impl EventHandler for App {
         while timer::check_update_time(ctx, DESIRED_UPS) {
             self.input_state.update();
             self.game_state.update(&self.input_state);
-            if self.input_state.should_exit {
+            if self.game_state.should_exit {
                 ctx.quit()?;
             }
         }
@@ -327,7 +352,7 @@ pub fn main() {
     let ctx = &mut ContextBuilder::new("pong", "ggez_inputty")
         .window_setup(WindowSetup::default().title("Pong!").resizable(true))
         .window_mode(
-            WindowMode::default().dimensions(640, (640.0 * FIELD_DIM.0 / FIELD_DIM.1) as u32),
+            WindowMode::default().dimensions((480.0 * FIELD_DIM.0 / FIELD_DIM.1) as u32, 480),
         )
         .build()
         .unwrap();
