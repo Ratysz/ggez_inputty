@@ -46,6 +46,19 @@ where
     bindings: HashMap<PhysicalInput, Vec<LogicalInput>>,
 }
 
+pub trait InputHandlerDefGen<LogicalInput, State, DefLogicalInput, DefState>
+where
+    LogicalInput: Hash + Eq + Clone + Debug,
+{
+    fn define_exp<F>(
+        &mut self,
+        logical: DefLogicalInput,
+        state_extractor: F,
+    ) -> &mut InputHandler<LogicalInput, State>
+    where
+        F: 'static + Fn(&mut State) -> &mut DefState;
+}
+
 impl<LogicalInput, State> InputHandler<LogicalInput, State>
 where
     LogicalInput: Hash + Eq + Clone + Debug,
@@ -57,15 +70,15 @@ where
         }
     }
 
-    pub fn define<F>(mut self, logical: LogicalInput, callback: F) -> Self
+    pub fn define<F>(&mut self, logical: LogicalInput, callback: F) -> &mut Self
     where
-        F: Fn(&mut State, PhysicalInput, PhysicalInputValue) -> InputtyResult + 'static,
+        F: 'static + Fn(&mut State, PhysicalInput, PhysicalInputValue) -> InputtyResult,
     {
         self.definitions.insert(logical, Box::new(callback));
         self
     }
 
-    pub fn bind(mut self, physical: PhysicalInput, logical: LogicalInput) -> Self {
+    pub fn bind(&mut self, physical: PhysicalInput, logical: LogicalInput) -> &mut Self {
         self.bindings
             .entry(physical)
             .or_insert_with(Vec::new)

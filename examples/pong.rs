@@ -14,7 +14,7 @@ use ggez::event::{run, Axis, Button, EventHandler, Keycode};
 use ggez::nalgebra;
 use ggez::timer;
 use ggez_inputty::{InputHandler, InputtyResult, PhysicalInput as PI, PhysicalInputValue as PIV};
-use ggez_inputty::virtual_axis::{self, VirtualAxisState};
+use ggez_inputty::virtual_axis::{self, VirtualAxisPhase};
 
 const BALL_DIM: f32 = 0.005;
 const BALL_MAX_VELOCITY: f32 = 0.015;
@@ -34,7 +34,7 @@ enum Input {
 
 struct PlayerInputState {
     axis: f32,
-    axis_state: VirtualAxisState,
+    axis_state: VirtualAxisPhase,
     pause_timer: u32,
 }
 
@@ -42,7 +42,7 @@ impl PlayerInputState {
     fn new() -> Self {
         PlayerInputState {
             axis: 0.0,
-            axis_state: VirtualAxisState::Relax,
+            axis_state: VirtualAxisPhase::Relax,
             pause_timer: 0,
         }
     }
@@ -79,7 +79,7 @@ impl InputState {
                 Input::PaddleAnalog(0),
                 |_state, _physical, _value| -> InputtyResult {
                     if let PIV::Axis(raw_axis) = _value {
-                        _state.paddle_l.axis_state = VirtualAxisState::Ignore;
+                        _state.paddle_l.axis_state = VirtualAxisPhase::Ignore;
                         _state.paddle_l.axis = raw_axis as f32 / i16::max_value() as f32;
                     }
                     Ok(())
@@ -101,7 +101,7 @@ impl InputState {
                 Input::PaddleAnalog(1),
                 |_state, _physical, _value| -> InputtyResult {
                     if let PIV::Axis(raw_axis) = _value {
-                        _state.paddle_r.axis_state = VirtualAxisState::Ignore;
+                        _state.paddle_r.axis_state = VirtualAxisPhase::Ignore;
                         _state.paddle_r.axis = raw_axis as f32 / i16::max_value() as f32;
                     }
                     Ok(())

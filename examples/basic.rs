@@ -11,30 +11,27 @@ use ggez::conf::{WindowMode, WindowSetup};
 use ggez::graphics::{self, DrawMode, Point2};
 use ggez::event::{run, Axis, Button, EventHandler, Keycode};
 use ggez::timer;
-use ggez_inputty::{InputHandler, InputtyResult, PhysicalInput as PI, PhysicalInputValue as PIV};
-use ggez_inputty::virtual_axis::{self, VirtualAxisState};
+use ggez_inputty::{InputHandler, InputHandlerDefGen, InputtyResult, PhysicalInput as PI,
+                   PhysicalInputValue as PIV};
+use ggez_inputty::virtual_axis::{self, VirtualAxisInput, VirtualAxisPhase, VirtualAxisState};
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Input {
-    SpinAnalog,
-    SpinDigitalPos,
-    SpinDigitalNeg,
+    Spin(VirtualAxisInput),
     ReturnError,
     Exit,
 }
 
 struct InputState {
     should_exit: bool,
-    spin_axis: f32,
-    spin_axis_state: VirtualAxisState,
+    spin_axis: VirtualAxisState,
 }
 
 impl InputState {
     fn new() -> Self {
         InputState {
             should_exit: false,
-            spin_axis: 0.0,
-            spin_axis_state: VirtualAxisState::Relax,
+            spin_axis: VirtualAxisState::new(0.1, 0.2, 0.1),
         }
     }
 }
@@ -49,7 +46,9 @@ struct App {
 impl App {
     fn new(ctx: &mut Context) -> GameResult<App> {
         let input_state = InputState::new();
-        let input_handler = InputHandler::<Input, InputState>::new()
+        let mut input_handler = InputHandler::<Input, InputState>::new();
+        define_virtual_axis!(input_handler, Input::Spin, spin_axis);
+        input_handler
             .define(Input::Exit, |_state, _physical, _value| -> InputtyResult {
                 info!(
                     "Logical input 'Exit' triggered via {:?}: {:?}",
@@ -69,36 +68,29 @@ impl App {
                     }
                 },
             )
-            .define(
-                Input::SpinAnalog,
-                |_state, _physical, _value| -> InputtyResult {
-                    if let PIV::Axis(raw_axis) = _value {
-                        _state.spin_axis_state = VirtualAxisState::Ignore;
-                        _state.spin_axis = raw_axis as f32 / i16::max_value() as f32;
-                    }
-                    Ok(())
-                },
-            )
-            .define(
-                Input::SpinDigitalPos,
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_pos(&mut _state.spin_axis_state, _value)
-                },
-            )
-            .define(
-                Input::SpinDigitalNeg,
-                |_state, _physical, _value| -> InputtyResult {
-                    virtual_axis::axis_input_neg(&mut _state.spin_axis_state, _value)
-                },
-            )
             .bind(PI::Key(Keycode::Escape, true), Input::Exit)
             .bind(PI::Key(Keycode::E, false), Input::ReturnError)
             .bind(PI::CButton(0, Button::Back), Input::Exit)
-            .bind(PI::CAxis(0, Axis::LeftX), Input::SpinAnalog)
-            .bind(PI::CButton(0, Button::DPadLeft), Input::SpinDigitalNeg)
-            .bind(PI::CButton(0, Button::DPadRight), Input::SpinDigitalPos)
-            .bind(PI::Key(Keycode::Left, false), Input::SpinDigitalNeg)
-            .bind(PI::Key(Keycode::Right, false), Input::SpinDigitalPos);
+            .bind(
+                PI::CAxis(0, Axis::LeftX),
+                Input::Spin(VirtualAxisInput::Analog),
+            )
+            .bind(
+                PI::CButton(0, Button::DPadLeft),
+                Input::Spin(VirtualAxisInput::Negative),
+            )
+            .bind(
+                PI::CButton(0, Button::DPadRight),
+                Input::Spin(VirtualAxisInput::Positive),
+            )
+            .bind(
+                PI::Key(Keycode::Left, false),
+                Input::Spin(VirtualAxisInput::Negative),
+            )
+            .bind(
+                PI::Key(Keycode::Right, false),
+                Input::Spin(VirtualAxisInput::Positive),
+            );
 
         let mesh = graphics::MeshBuilder::new()
             .line(
@@ -127,14 +119,9 @@ impl EventHandler for App {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         const DESIRED_UPS: u32 = 60;
         while timer::check_update_time(ctx, DESIRED_UPS) {
-            self.rotation_angle += self.input_state.spin_axis / 10.0;
-            virtual_axis::axis_update(
-                &mut self.input_state.spin_axis,
-                &self.input_state.spin_axis_state,
-                0.1,
-                0.2,
-                0.1,
-            );
+            self.rotation_angle += self.input_state.spin_axis.value() / 10.0;
+            let mut f = 0.0;
+            self.input_state.spin_axis.update(1.0);
             if self.input_state.should_exit {
                 ctx.quit()?;
             }
